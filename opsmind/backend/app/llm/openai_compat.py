@@ -28,7 +28,7 @@ from typing import Any, cast
 
 import httpx
 
-from app.llm.base import LLMError, NoToolCallError, ToolTurn
+from app.llm.base import LLMError, NoToolCallError, ToolTurn, TruncatedTurnError
 
 logger = logging.getLogger("app.llm.openai_compat")
 
