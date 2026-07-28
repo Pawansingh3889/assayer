@@ -1,0 +1,142 @@
+# Deployment compose. Not a development file — see docker-compose.yml for that.
+#
+# The development file is correct for development and wrong for an install: it
+# bind-mounts the source over the image, runs uvicorn --reload, seeds demo users on
+# every boot, publishes Postgres to the host, and pins images by mutable tags. Every
+# one of those is a bug in a customer deployment, so this is a separate file rather
+# than a pile of overrides.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Required in the environment (no defaults — a missing value must fail loudly):
+#   POSTGRES_PASSWORD    the database password
+#   LLM_TIER1_API_KEY    unless tier 1 is disabled
+#
+# APP_ENV=prod is set below deliberately: it makes an unusable LLM configuration a
+# startup failure rather than a warning, so a mistyped .env cannot reach a participant
+# as "the assistant is briefly unavailable".
+
+name: opsmind-prod
+
+services:
+  postgres:
+    # Pinned by digest, not by tag. `postgres:17-alpine` moves, so a tag pin means two
+    # installs a month apart can run different engines while claiming the same version.
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-opsmind}
+      # `:?` fails the command rather than defaulting. A deployment that silently
+      # accepts a well-known password is worse than one that refuses to start.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before deploying}
+      POSTGRES_DB: ${POSTGRES_DB:-opsmind}
+    # No `ports:`. The database is reachable only on the compose network, by the
+    # backend. Publishing 5432 to the host — as the development file does — puts the
+    # database on the deployment's network interface for no benefit.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-opsmind} -d ${POSTGRES_DB:-opsmind}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest@sha256:4dea9fb511947e24a84237bb636b0203abcb2ff0d3fbc7b4ff865deb91362131
+    environment:
+      # Ollama unloads a model after ~5 minutes idle, so the first turn after any gap
+      # pays a full cold load — minutes, on CPU. Keeping it resident pays that once.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      # Not just "is the server up" — the model must be present, or tier 3 404s at
+      # precisely the moment both cloud tiers have already failed.
+      test:
+        [
+          "CMD-SHELL",
+          "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.1:8b}\" || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
+  # Pulls the model once, then exits. The backend waits on this completing rather than
+  # on the ollama container merely being up.
+  ollama-pull:
+    image: ollama/ollama:latest@sha256:4dea9fb511947e24a84237bb636b0203abcb2ff0d3fbc7b4ff865deb91362131
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      'until ollama list >/dev/null 2>&1; do sleep 2; done;
+       ollama pull "${OLLAMA_MODEL:-llama3.1:8b}"'
+    restart: "no"
+
+  backend:
+    # Tagged so the built image is identifiable and can be pushed to a registry. A
+    # release should pull a pre-built, signed image rather than building on the
+    # customer's host; until that registry exists, this at least stops the image being
+    # anonymous. See PIPELINE.md §3 for where that is going.
+    image: opsmind-backend:0.1.0
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-opsmind}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before deploying}@postgres:5432/${POSTGRES_DB:-opsmind}
+      # Makes a broken LLM configuration fatal at startup instead of a warning.
+      APP_ENV: prod
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set FRONTEND_ORIGIN to the browser app's origin}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LLM_TIER1_ENABLED: ${LLM_TIER1_ENABLED:-true}
+      LLM_TIER1_BASE_URL: ${LLM_TIER1_BASE_URL:-https://api.cerebras.ai/v1}
+      LLM_TIER1_API_KEY: ${LLM_TIER1_API_KEY:-}
+      LLM_TIER1_MODEL: ${LLM_TIER1_MODEL:-llama-3.3-70b}
+      LLM_TIER1_TIMEOUT_SECONDS: ${LLM_TIER1_TIMEOUT_SECONDS:-120}
+      LLM_TIER2_ENABLED: ${LLM_TIER2_ENABLED:-false}
+      LLM_TIER2_BASE_URL: ${LLM_TIER2_BASE_URL:-}
+      LLM_TIER2_API_KEY: ${LLM_TIER2_API_KEY:-}
+      LLM_TIER2_MODEL: ${LLM_TIER2_MODEL:-}
+      LLM_TIER2_TIMEOUT_SECONDS: ${LLM_TIER2_TIMEOUT_SECONDS:-120}
+      LLM_TIER3_ENABLED: ${LLM_TIER3_ENABLED:-true}
+      LLM_TIER3_BASE_URL: ${LLM_TIER3_BASE_URL:-http://ollama:11434/v1}
+      LLM_TIER3_API_KEY: ${LLM_TIER3_API_KEY:-}
+      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-llama3.1:8b}
+      LLM_TIER3_TIMEOUT_SECONDS: ${LLM_TIER3_TIMEOUT_SECONDS:-300}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    # No source bind mount: the image is what runs, so what was tested is what ships.
+    # Migrations still apply on start — the schema must match the code that ships with
+    # it — but `python -m app.seed` does not. Seeding is idempotent, which is why it is
+    # harmless in development, and exactly why it must not run here: it would create
+    # demo creator and participant accounts on a customer's install, and dev-auth trusts
+    # any user id it is handed.
+    command: >-
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    restart: unless-stopped
+    healthcheck:
+      # Readiness, not liveness: /api/v1/health answers 503 when it cannot reach the
+      # database, so an unhealthy backend here means it genuinely cannot serve.
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5).status == 200 else 1)\"",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  pgdata:
+  # Model weights are several GB; a named volume keeps them across `compose down` so
+  # the pull happens once rather than on every restart.
+  ollama:
