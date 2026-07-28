@@ -26,6 +26,7 @@ from app.templates.enums import AnswerType
 from app.templates.schemas import QuestionInput, TemplateCreate
 from app.templates.service import TemplateService
 from app.users.models import User, UserRole
+from tests.fakes import FakeLLM
 
 DEFAULT_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"
 
@@ -63,6 +64,58 @@ async def engine():
 async def session(engine):
     async with AsyncSession(engine, expire_on_commit=False) as sess:
         yield sess
+
+
+@pytest_asyncio.fixture
+async def client(session):
+    """The app, driven over HTTP, against the same session the test asserts on.
+
+    Everything below the routes already had tests; the routes themselves did not, so
+    the auth dependencies, the error handlers, the status codes and the response
+    schemas were never exercised. This fixture is what makes them testable.
+
+    ASGITransport dispatches straight into the app — no socket, no live server, no
+    port to collide with. ``get_session`` is overridden rather than left alone so a
+    request and the test that set it up see the same rows: the fixtures below only
+    flush, and an independent session would not see uncommitted work.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.db.session import get_session
+    from app.main import app
+
+    async def _use_the_test_session():
+        yield session
+
+    # The app is a module-level singleton, so an override left behind would leak into
+    # every later test. Registered and removed around one test only.
+    app.dependency_overrides[get_session] = _use_the_test_session
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://opsmind.test"
+        ) as http:
+            yield http
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+@pytest_asyncio.fixture
+def fake_llm(monkeypatch):
+    """Install a FakeLLM everywhere the app builds one, and hand it back.
+
+    Three modules call ``get_llm``, and each does ``from app.llm.factory import
+    get_llm`` — which binds the name into that module. Patching the factory alone
+    would therefore miss all three, and the request would try to reach a real
+    provider. Patch the names the callers actually look up.
+    """
+
+    def install(*turns):
+        llm = FakeLLM(*turns)
+        for module in ("app.conduct.engine", "app.templates.generation", "app.runs.summary"):
+            monkeypatch.setattr(f"{module}.get_llm", lambda _llm=llm: _llm)
+        return llm
+
+    return install
 
 
 @pytest_asyncio.fixture
