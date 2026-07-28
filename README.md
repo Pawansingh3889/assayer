@@ -12,6 +12,22 @@ Runs entirely on your own hardware. No cloud API keys. No data leaves the buildi
 
 ---
 
+## What is in this repository today
+
+> **The rest of this document describes a design, not a build.** None of Assayer is
+> implemented: there is no interface, no ledger, no witness, and no `assayer verify`. The
+> quick start below does not work — `make`, `.env.example`, `LICENSE` and `docs/` do not
+> exist yet. Read `SPEC.md` and `ARCHITECTURE.md` as the specifications they are, and
+> `PIPELINE.md` §2 for a file-by-file account of what is actually on disk.
+>
+> The only running code is **`opsmind/`** — a survey and conduct service with its own
+> [README](opsmind/README.md). It is a working FastAPI backend, and it is *not* the
+> product described here. `buildplan.md` casts OpsMind as an operator surface for fleet
+> health and scan scheduling, which is not what that code does either. Reconciling the
+> two is an open question, recorded rather than quietly tidied away.
+
+---
+
 ## Why this exists
 
 Governed database access for AI agents is a solved problem — [WrenAI][wren] solves it well, and
