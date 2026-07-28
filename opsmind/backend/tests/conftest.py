@@ -168,6 +168,18 @@ async def published(session, creator):
 
 
 @pytest_asyncio.fixture
+async def draft(session, creator):
+    """A saved but unpublished template — there is nothing here a participant may answer."""
+    return await TemplateService(session).create_draft(
+        TemplateCreate(
+            title="Not published yet",
+            questions=[QuestionInput(text="Anything to add?", answer_type=AnswerType.long_text)],
+        ),
+        creator,
+    )
+
+
+@pytest_asyncio.fixture
 async def other_participant(session):
     """A second participant, for proving one cannot resume another's run."""
     user = User(
