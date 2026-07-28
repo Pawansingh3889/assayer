@@ -28,10 +28,9 @@ def get_llm() -> LLMProtocol:
         api_key = getattr(settings, f"llm_tier{tier}_api_key")
         model = getattr(settings, f"llm_tier{tier}_model")
         timeout = getattr(settings, f"llm_tier{tier}_timeout_seconds")
-        if not base_url or not model:
-            # Misconfiguration: enabled but missing required fields.
-            # We let the client constructor raise a clear error.
-            pass
+        # A tier enabled without base_url/model is a misconfiguration; the client
+        # constructor raises on it, which is what we want — loudly, at startup,
+        # rather than on the first turn that happens to reach this tier.
         chain.append(
             OpenAICompatibleLLMClient(
                 base_url=base_url,

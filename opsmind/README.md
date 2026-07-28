@@ -12,12 +12,13 @@ This repository is the backend. There is no frontend yet.
 ## Stack
 
 - **Python 3.12**, FastAPI (async), SQLAlchemy 2.x async + Alembic, PostgreSQL, Pydantic v2
-- **LLM** — Anthropic Claude via the official SDK as primary, then an ordered chain of up
-  to three OpenAI-compatible backups (Groq, Gemini, OpenRouter, self-hosted vLLM/Ollama,
-  and so on), each tried until one answers. A tier whose key is absent is skipped, and
-  when every tier fails the API returns a 503 rather than leaking an upstream error. See
-  `LLM_BACKUP*_*` in `.env.example`.
-- **Dev** — docker-compose (postgres + backend)
+- **LLM** — an ordered failover chain of up to three OpenAI-compatible endpoints, each
+  tried until one answers. The shipped default is cloud-first with a local backstop:
+  **tier 1 Cerebras → tier 2 Groq → tier 3 Ollama**, the last running as a compose
+  service so it is never rate-limited and never out of credit. A disabled tier is
+  skipped; when every tier fails the API returns a 503 rather than leaking an upstream
+  error. See `LLM_TIER*_*` in `.env.example`.
+- **Dev** — docker-compose (postgres + ollama + backend)
 
 ## Layout
 
@@ -31,8 +32,8 @@ backend/
                     show_when visibility, completion-time estimate
     runs/           run, answer and transcript models; results; AI run summary
     conduct/        the deterministic run engine (answer validation, run locking)
-    llm/            Anthropic client, OpenAI-compatible backups, failover chain,
-                    tolerant decoding of model JSON, versioned prompts
+    llm/            OpenAI-compatible client, tier failover chain, tolerant
+                    decoding of model JSON, versioned prompts
     auth/           dev-auth dependency
   migrations/       Alembic (async env)
   tests/            pytest against a real Postgres, LLM faked at the client boundary
@@ -46,7 +47,7 @@ Repositories own every query. Nothing above the repository layer touches a sessi
 ## Quick start
 
 ```bash
-cp .env.example .env          # add ANTHROPIC_API_KEY for the LLM features
+cp .env.example .env          # add LLM_TIER1_API_KEY (Cerebras) for the cloud tiers
 docker compose up --build     # or: podman compose up --build
 ```
 
@@ -91,7 +92,8 @@ empty database, then ruff, black, mypy and pytest.
 
 `.github/workflows/live-conduct.yml` is the opposite check — it drives real
 conversations through a real model, and only runs when you press *Run workflow*, since
-it costs credit. It needs an `ANTHROPIC_API_KEY` repository secret.
+it costs credit. It needs an `LLM_TIER1_API_KEY` repository secret — and
+`scripts/live_conversation.py`, which is not yet in this repository.
 
 ## Working outside Docker
 

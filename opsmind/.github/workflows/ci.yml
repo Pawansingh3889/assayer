@@ -32,7 +32,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind
-      # No ANTHROPIC_API_KEY: the suite fakes the LLM at the client wrapper, so it
+      # No LLM tier configured: the suite fakes the LLM at the client wrapper, so it
       # must pass without one. If a test ever needs a key, that is the bug.
 
     steps:

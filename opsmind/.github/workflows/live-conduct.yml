@@ -8,7 +8,11 @@ name: Live conduct check
 # it to and never tries to work around the engine's design.
 #
 # Setup once: repo Settings -> Secrets and variables -> Actions -> New repository
-# secret, name ANTHROPIC_API_KEY. Nothing else is required.
+# secret, name LLM_TIER1_API_KEY. Nothing else is required.
+#
+# NOTE: this workflow cannot run yet — it invokes scripts/live_conversation.py, which
+# is not present in this repository. Restore that script, or delete this workflow; a
+# dispatch job that fails on invocation reads as a capability and is not one.
 
 on:
   workflow_dispatch:
@@ -30,7 +34,7 @@ on:
           - broad
           - evasive
       model:
-        description: "Anthropic model id (blank = repo default)"
+        description: "Model id for tier 1 (blank = repo default)"
         type: string
         default: ""
 
@@ -55,14 +59,16 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ANTHROPIC_MODEL: ${{ inputs.model }}
+      LLM_TIER1_ENABLED: "true"
+      LLM_TIER1_BASE_URL: https://api.cerebras.ai/v1
+      LLM_TIER1_API_KEY: ${{ secrets.LLM_TIER1_API_KEY }}
+      LLM_TIER1_MODEL: ${{ inputs.model || 'llama-3.3-70b' }}
 
     steps:
       - name: Require the API key secret
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::No ANTHROPIC_API_KEY secret is set. Add one under" \
+          if [ -z "$LLM_TIER1_API_KEY" ]; then
+            echo "::error::No LLM_TIER1_API_KEY secret is set. Add one under" \
                  "Settings -> Secrets and variables -> Actions, then re-run."
             exit 1
           fi

@@ -17,6 +17,49 @@ services:
       timeout: 3s
       retries: 10
 
+  # Tier 3 of the LLM chain: the local backstop, reached only when the cloud tiers
+  # fail. It is never rate-limited and never out of credit, which is the whole point.
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      # Ollama unloads a model after ~5 minutes idle by default, so the first turn
+      # after any gap pays a full cold load — on CPU that is minutes, and it is the
+      # only reason tier 3's timeout is 300s. Keeping the model resident pays that
+      # cost once at startup instead of once per idle gap.
+      #
+      # This is the server-side lever. Passing `keep_alive` as a request field works
+      # on Ollama's native /api/chat but is not reliably honoured by the /v1 OpenAI
+      # shim this app speaks, so it is set here where it unambiguously applies.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      # Not just "is the server up" — the model must actually be present, or tier 3
+      # 404s at precisely the moment both cloud tiers have already failed.
+      test:
+        [
+          "CMD-SHELL",
+          "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.1:8b}\" || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 60          # generous: the first pull downloads several GB
+      start_period: 30s
+
+  # Pulls the model once, then exits. The backend waits on this completing rather
+  # than on the ollama container merely being up.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      'until ollama list >/dev/null 2>&1; do sleep 2; done;
+       ollama pull "${OLLAMA_MODEL:-llama3.1:8b}"'
+    restart: "no"
+
   backend:
     build: ./backend
     environment:
@@ -32,14 +75,18 @@ services:
       LLM_TIER2_API_KEY: ${LLM_TIER2_API_KEY:-}
       LLM_TIER2_MODEL: ${LLM_TIER2_MODEL:-}
       LLM_TIER2_TIMEOUT_SECONDS: ${LLM_TIER2_TIMEOUT_SECONDS:-300}
-      LLM_TIER3_ENABLED: ${LLM_TIER3_ENABLED:-false}
-      LLM_TIER3_BASE_URL: ${LLM_TIER3_BASE_URL:-}
+      # Tier 3 defaults point at the in-network Ollama service above, so the local
+      # backstop works out of the box without anything in .env.
+      LLM_TIER3_ENABLED: ${LLM_TIER3_ENABLED:-true}
+      LLM_TIER3_BASE_URL: ${LLM_TIER3_BASE_URL:-http://ollama:11434/v1}
       LLM_TIER3_API_KEY: ${LLM_TIER3_API_KEY:-}
-      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-}
+      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-llama3.1:8b}
       LLM_TIER3_TIMEOUT_SECONDS: ${LLM_TIER3_TIMEOUT_SECONDS:-300}
     depends_on:
       postgres:
         condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
@@ -54,3 +101,6 @@ services:
 
 volumes:
   pgdata:
+  # Model weights are several GB; a named volume keeps them across `compose down`
+  # so the pull happens once rather than on every restart.
+  ollama:
