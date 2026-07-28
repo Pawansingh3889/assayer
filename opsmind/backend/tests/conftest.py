@@ -2,10 +2,21 @@
 
 Uses the compose Postgres (a separate ``opsmind_test`` database), so repository and
 service logic is exercised against the real engine, not a stand-in.
+
+Where that Postgres lives comes from ``DATABASE_URL`` — the same variable CI sets and
+the README tells you to set when running pytest. It used to be hardcoded to
+``localhost:5432``, so setting ``DATABASE_URL`` for the suite did nothing and the
+documented command was misleading. Worse, on a machine already running something else
+on 5432, the suite would connect to *that* database and create ``opsmind_test`` inside
+it. The default below is the old literal, so nothing changes for anyone who sets
+nothing.
 """
+
+import os
 
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.db.base import Base
@@ -16,17 +27,28 @@ from app.templates.schemas import QuestionInput, TemplateCreate
 from app.templates.service import TemplateService
 from app.users.models import User, UserRole
 
-ADMIN_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"
-TEST_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind_test"
+DEFAULT_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"
+
+_admin = make_url(os.environ.get("DATABASE_URL") or DEFAULT_URL)
+# The test database is the configured one with a ``_test`` suffix, so pointing
+# DATABASE_URL at a real database can never make the suite drop its tables.
+TEST_DB = f"{_admin.database}_test"
+
+ADMIN_URL = _admin.render_as_string(hide_password=False)
+TEST_URL = _admin.set(database=TEST_DB).render_as_string(hide_password=False)
 
 
 @pytest_asyncio.fixture
 async def engine():
     admin = create_async_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
     async with admin.connect() as conn:
-        found = await conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = 'opsmind_test'"))
+        found = await conn.scalar(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": TEST_DB}
+        )
         if not found:
-            await conn.execute(text("CREATE DATABASE opsmind_test"))
+            # CREATE DATABASE takes no bind parameters, so the identifier is quoted
+            # rather than bound. TEST_DB is derived from the operator's own env.
+            await conn.execute(text(f'CREATE DATABASE "{TEST_DB}"'))
     await admin.dispose()
 
     eng = create_async_engine(TEST_URL)
