@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # The suite deliberately runs against a real Postgres rather than SQLite, so the
+    # repository layer is exercised against the engine it ships on. Credentials match
+    # the ones tests/conftest.py connects with.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: opsmind
+          POSTGRES_PASSWORD: opsmind
+          POSTGRES_DB: opsmind
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opsmind -d opsmind"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind
+      # No ANTHROPIC_API_KEY: the suite fakes the LLM at the client wrapper, so it
+      # must pass without one. If a test ever needs a key, that is the bug.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Migrations apply from scratch
+        run: uv run alembic upgrade head
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: black
+        run: uv run black --check app tests
+
+      - name: mypy
+        run: uv run mypy app
+
+      - name: pytest
+        run: uv run pytest -q

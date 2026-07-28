@@ -1,0 +1,106 @@
+name: Live conduct check
+
+# The CI workflow runs the mocked suite on every push and never needs a key.
+# This one is the opposite: it drives real conversations through the real model,
+# which costs credit, so it only runs when you press "Run workflow" (Actions tab,
+# or the GitHub Actions panel in VS Code). It is the check that has found every
+# fabrication bug the mocked tests could not - a fake LLM does what the test tells
+# it to and never tries to work around the engine's design.
+#
+# Setup once: repo Settings -> Secrets and variables -> Actions -> New repository
+# secret, name ANTHROPIC_API_KEY. Nothing else is required.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Which conversation(s) to run (all = every scenario, ~150 model calls)"
+        type: choice
+        default: all
+        options:
+          - all
+          - max_length
+          - skip_heavy
+          - write_ins
+          - numbers_dates
+          - injection
+          - out_of_order
+          - multi_answer
+          - probe_budget
+          - broad
+          - evasive
+      model:
+        description: "Anthropic model id (blank = repo default)"
+        type: string
+        default: ""
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: opsmind
+          POSTGRES_PASSWORD: opsmind
+          POSTGRES_DB: opsmind
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opsmind -d opsmind"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_MODEL: ${{ inputs.model }}
+
+    steps:
+      - name: Require the API key secret
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::No ANTHROPIC_API_KEY secret is set. Add one under" \
+                 "Settings -> Secrets and variables -> Actions, then re-run."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked
+
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          uv run alembic upgrade head
+          uv run python -m app.seed
+
+      - name: Start the backend
+        working-directory: backend
+        run: |
+          uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          echo "$!" > /tmp/uvicorn.pid
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:8000/api/v1/health >/dev/null && exit 0
+            sleep 1
+          done
+          echo "::error::backend did not become healthy in 60s"
+          exit 1
+
+      - name: Drive the conversation(s)
+        # The script prints each transcript and its checks, and exits non-zero on any
+        # hard-check failure, so a real regression turns this step red.
+        run: python3 scripts/live_conversation.py "${{ inputs.scenario }}"
+
+      - name: Stop the backend
+        if: always()
+        run: kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true

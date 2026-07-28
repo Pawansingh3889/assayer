@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+__MACOSX/
+._*
+
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.pnpm-store/
+npm-debug.log*
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea/
+# Share the editor config that helps anyone opening the repo; keep personal
+# workspace state (and whatever extensions write in) out of it.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.log

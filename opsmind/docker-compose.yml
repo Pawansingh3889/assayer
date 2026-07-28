@@ -1,0 +1,56 @@
+name: opsmind
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: opsmind
+      POSTGRES_PASSWORD: opsmind
+      POSTGRES_DB: opsmind
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsmind -d opsmind"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://opsmind:opsmind@postgres:5432/opsmind
+      # LLM tiers (ordered failover chain). At least one tier must be configured.
+      LLM_TIER1_ENABLED: ${LLM_TIER1_ENABLED:-false}
+      LLM_TIER1_BASE_URL: ${LLM_TIER1_BASE_URL:-}
+      LLM_TIER1_API_KEY: ${LLM_TIER1_API_KEY:-}
+      LLM_TIER1_MODEL: ${LLM_TIER1_MODEL:-}
+      LLM_TIER1_TIMEOUT_SECONDS: ${LLM_TIER1_TIMEOUT_SECONDS:-300}
+      LLM_TIER2_ENABLED: ${LLM_TIER2_ENABLED:-false}
+      LLM_TIER2_BASE_URL: ${LLM_TIER2_BASE_URL:-}
+      LLM_TIER2_API_KEY: ${LLM_TIER2_API_KEY:-}
+      LLM_TIER2_MODEL: ${LLM_TIER2_MODEL:-}
+      LLM_TIER2_TIMEOUT_SECONDS: ${LLM_TIER2_TIMEOUT_SECONDS:-300}
+      LLM_TIER3_ENABLED: ${LLM_TIER3_ENABLED:-false}
+      LLM_TIER3_BASE_URL: ${LLM_TIER3_BASE_URL:-}
+      LLM_TIER3_API_KEY: ${LLM_TIER3_API_KEY:-}
+      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-}
+      LLM_TIER3_TIMEOUT_SECONDS: ${LLM_TIER3_TIMEOUT_SECONDS:-300}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      # ":z" relabels the bind mount for SELinux (Fedora/RHEL + rootless Podman);
+      # it is a no-op on Docker and on systems without SELinux.
+      - ./backend:/app:z
+      - /app/.venv
+    command: >-
+      sh -c "alembic upgrade head &&
+             python -m app.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  pgdata:
