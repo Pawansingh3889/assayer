@@ -1,7 +1,9 @@
 """Provider failover: try each LLM in an ordered chain until one answers.
 
-The chain runs in configured order — tier 1, then tier 2, then tier 3 — e.g. a local
-Ollama endpoint, then Cerebras, then Groq. Every tier is an OpenAI-compatible client;
+The chain runs in configured order — tier 1, then tier 2, then tier 3. The shipped
+default is cloud-first with a local backstop: Cerebras, then Groq, then a local Ollama
+that is never rate-limited and never out of credit. Every tier is an OpenAI-compatible
+client;
 "tier 2" means the next one tried, not a lesser class of provider. A tier is reached only
 when every tier before it raises an ``LLMError`` (transport down, rate limited, credit
 exhausted, malformed tool call). If every tier fails, the last error propagates: the

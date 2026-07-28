@@ -5,6 +5,8 @@ Routes stay thin and delegate to services; domain routers are mounted here.
 
 import logging
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +19,7 @@ from app.conduct.router import router as runs_router
 from app.config import get_settings
 from app.db.session import get_session
 from app.errors import register_error_handlers
+from app.llm.factory import get_llm
 from app.runs.router import router as results_router
 from app.templates.router import router as templates_router
 from app.users.router import router as users_router
@@ -52,7 +55,40 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger("app.main")
 
-app = FastAPI(title="Opsmind Survey Service", version="0.1.0")
+
+def check_llm_configuration() -> None:
+    """Build the LLM chain once at startup, so a misconfiguration is a boot failure.
+
+    ``get_llm`` is called lazily, on the first turn that needs a model. That is right
+    for latency — starting and reading a run should not construct a client — but it
+    means "no tier configured at all" first surfaced as a ``RuntimeError`` on a
+    participant's first message, mid-survey, as a 500. The deployment looked healthy
+    right up until somebody used it.
+
+    Constructing the chain makes no network call, so this stays a configuration check
+    rather than a liveness probe against a provider: an unreachable Ollama must not
+    stop the service booting, since the failover chain exists precisely to survive that.
+
+    Fatal only in prod. The test suite deliberately configures no tier — it fakes the
+    model at the client boundary and must pass without a key — so in dev this is a
+    warning. Raising here unconditionally would turn every test red.
+    """
+    settings = get_settings()
+    try:
+        get_llm()
+    except (RuntimeError, ValueError) as exc:
+        if settings.app_env == "prod":
+            raise
+        logger.warning("no usable LLM configuration (app_env=%s): %s", settings.app_env, exc)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    check_llm_configuration()
+    yield
+
+
+app = FastAPI(title="Opsmind Survey Service", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
