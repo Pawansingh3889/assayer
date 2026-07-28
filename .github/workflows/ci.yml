@@ -8,9 +8,12 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # Paths are relative to the repository root. This workflow must live at the root —
+    # GitHub reads workflows only from `.github/workflows/` there, so the copy that used
+    # to sit at `opsmind/.github/workflows/` never ran once OpsMind was nested.
     defaults:
       run:
-        working-directory: backend
+        working-directory: opsmind/backend
 
     # The suite deliberately runs against a real Postgres rather than SQLite, so the
     # repository layer is exercised against the engine it ships on. Credentials match
@@ -41,7 +44,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: backend/uv.lock
+          cache-dependency-glob: opsmind/backend/uv.lock
 
       - name: Install dependencies
         run: uv sync --locked
