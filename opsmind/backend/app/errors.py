@@ -63,7 +63,7 @@ def register_error_handlers(app: FastAPI) -> None:
     # the failover chain) — a participant must never see that. Catch every LLMError that
     # reaches the HTTP boundary (all tiers down, rate-limited, malformed) and answer with
     # one calm 503. Registered on the LLMError base, so its subclasses resolve here too:
-    # Starlette walks the exception's MRO. Imported locally because app.llm.client imports
+    # Starlette walks the exception's MRO. Imported locally because app.llm.base imports
     # this module, so a top-level import would be circular.
     from app.llm.base import LLMError
 

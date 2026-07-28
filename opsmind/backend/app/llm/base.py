@@ -1,18 +1,19 @@
 """Shared vocabulary for LLM providers.
 
 This module contains the protocol, data classes, and error types that are
-provider-agnostic. Concrete providers (Anthropic, OpenAI-compatible) implement
-the LLMProtocol and return the defined types.
+provider-agnostic. Concrete clients implement ``LLMProtocol`` and return the
+defined types; today that is ``app.llm.openai_compat.OpenAICompatibleLLMClient``,
+one instance per configured tier, chained by ``app.llm.failover.FailoverLLM``.
 
-Engines and tests depend only on this module, not on provider-specific code.
+Engines and tests depend only on this module, not on provider-specific code —
+which is what made removing the Anthropic client a change of imports rather than
+a change of behaviour.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.errors import AppError
 

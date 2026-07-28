@@ -11,9 +11,10 @@ dependencies = [
     "alembic>=1.14",
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
-    # Imported at module scope by app/llm/backup.py, which is on the import chain from
-    # app.main. It was dev-only, so the image (uv sync --no-dev) booted only because
-    # anthropic happens to pull httpx in transitively.
+    # Imported at module scope by app/llm/openai_compat.py, which is on the import chain
+    # from app.main. It was once dev-only and the image (uv sync --no-dev) booted only
+    # because the anthropic SDK pulled httpx in transitively. That SDK is gone, so this
+    # declaration is now the only thing putting httpx in the runtime image — it must stay.
     "httpx>=0.28",
 ]
 

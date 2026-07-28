@@ -46,7 +46,9 @@ class Settings(BaseSettings):
         "", description="Third tier base URL, e.g. https://api.groq.com/openai/v1"
     )
     llm_tier3_api_key: str = Field("", description="Third tier API key (blank if not required)")
-    llm_tier3_model: str = Field("", description="Third tier model id, e.g. llama-3.3-70b-versatile")
+    llm_tier3_model: str = Field(
+        "", description="Third tier model id, e.g. llama-3.3-70b-versatile"
+    )
     llm_tier3_timeout_seconds: float = Field(
         300.0, gt=0, description="Read timeout for the third tier, in seconds"
     )

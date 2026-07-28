@@ -1,7 +1,8 @@
 """The factory assembles the failover chain from settings, in the right order.
 
-Settings are supplied directly (bypassing the real environment) and the Anthropic client
-is stubbed where a key is claimed, so no network or API key is touched.
+Settings are supplied directly, bypassing the real environment, so no network or API key
+is touched. Every tier is an OpenAI-compatible client; the factory only decides how many
+there are and in what order.
 """
 
 from typing import Any
@@ -10,9 +11,9 @@ import pytest
 
 from app.config import Settings
 from app.llm import factory
-from app.llm.openai_compat import OpenAICompatibleLLMClient
 from app.llm.base import LLMError
 from app.llm.failover import FailoverLLM
+from app.llm.openai_compat import OpenAICompatibleLLMClient
 
 
 def _settings(**overrides: Any) -> Settings:

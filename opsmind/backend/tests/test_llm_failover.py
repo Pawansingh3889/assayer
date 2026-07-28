@@ -1,4 +1,4 @@
-"""Backup-provider tests: the failover wrapper and the OpenAI-compatible client.
+"""LLM tier tests: the failover wrapper and the OpenAI-compatible client.
 
 All offline — the OpenAI-compatible client is driven through an httpx MockTransport, so no
 network or API key is touched, and the failover wrapper uses in-memory doubles.
@@ -10,9 +10,9 @@ from typing import Any
 import httpx
 import pytest
 
-from app.llm.openai_compat import OpenAICompatibleLLMClient
 from app.llm.base import LLMError, ToolTurn, TruncatedTurnError
 from app.llm.failover import FailoverLLM
+from app.llm.openai_compat import OpenAICompatibleLLMClient
 
 # ---------------------------------------------------------------- failover wrapper
 
@@ -82,7 +82,7 @@ async def test_failover_propagates_backup_failure_loudly():
 
 
 async def test_failover_chains_through_to_the_second_backup():
-    """Anthropic -> Cerebras -> Groq: both earlier tiers fail, the third answers."""
+    """Tier 1 -> tier 2 -> tier 3: both earlier tiers fail, the third answers."""
     primary = _StubLLM(fail=True)
     backup1 = _StubLLM(fail=True)
     backup2 = _StubLLM(payload={"from": "b2"}, turn=ToolTurn("ok", "move_on", {}))
@@ -399,8 +399,9 @@ async def test_salvage_still_refuses_what_is_not_a_tool_call(label: str, content
 
 
 async def test_the_backup_tier_records_its_token_usage(caplog):
-    """A backup can serve any live turn — with no Anthropic key, every turn — and until
-    this was added those tokens were spent with no record whatsoever."""
+    """Every tier serves live turns, so every tier must record what it spent.
+
+    Until this was added those tokens went unrecorded entirely."""
     import logging
 
     def handler(_: httpx.Request) -> httpx.Response:
@@ -431,6 +432,7 @@ async def test_a_tier_that_omits_usage_still_logs_cleanly(caplog):
     assert turn.tool_name == "move_on"
     assert any("usage=None" in r.getMessage() for r in caplog.records)
 
+
 def _truncated_response() -> dict[str, Any]:
     """Return a choice that indicates truncation with no tool calls."""
     return {
@@ -453,7 +455,12 @@ def _truncated_response() -> dict[str, Any]:
 
 
 def test_truncated_turn_raises_truncated_turn_error():
-    """When the upstream returns finish_reason='length' with no tool call, we raise TruncatedTurnError."""
+    """finish_reason='length' with no tool call must raise TruncatedTurnError.
+
+    Not NoToolCallError: the engine retries those with a nudge, and a retry at the
+    same token budget truncates in exactly the same place.
+    """
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         return httpx.Response(200, json=_truncated_response())
@@ -469,6 +476,7 @@ def test_truncated_turn_raises_truncated_turn_error():
         # tool_turn is easier to test because it doesn't require a specific tool name.
         # We'll use tool_turn with max_tokens=16 to match the response's usage.
         import asyncio
+
         asyncio.run(
             client.tool_turn(
                 system="s",
@@ -482,6 +490,7 @@ def test_truncated_turn_raises_truncated_turn_error():
 
 def test_truncated_turn_in_tool_call_also_raises():
     """tool_call should also raise TruncatedTurnError on truncation."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         return httpx.Response(200, json=_truncated_response())
@@ -495,6 +504,7 @@ def test_truncated_turn_in_tool_call_also_raises():
 
     with pytest.raises(TruncatedTurnError):
         import asyncio
+
         asyncio.run(
             client.tool_call(
                 system="s",

@@ -1,6 +1,6 @@
 """Test doubles for the LLM, substituted at the client wrapper's boundary.
 
-Every test runs without an API key because nothing below this line talks to Anthropic.
+Every test runs without an API key because nothing below this line talks to a provider.
 """
 
 from typing import Any

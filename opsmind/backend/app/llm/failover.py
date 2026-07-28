@@ -1,13 +1,17 @@
 """Provider failover: try each LLM in an ordered chain until one answers.
 
-The chain runs primary-first (Anthropic), then each configured backup in turn — e.g.
-Cerebras, then Groq. A tier is reached only when every tier before it raises an
-``LLMError`` (transport down, rate limited, credit exhausted, malformed tool call). If
-every tier fails, the last error propagates: the system still fails loudly, never
-silently degrading.
+The chain runs in configured order — tier 1, then tier 2, then tier 3 — e.g. a local
+Ollama endpoint, then Cerebras, then Groq. Every tier is an OpenAI-compatible client;
+"tier 2" means the next one tried, not a lesser class of provider. A tier is reached only
+when every tier before it raises an ``LLMError`` (transport down, rate limited, credit
+exhausted, malformed tool call). If every tier fails, the last error propagates: the
+system still fails loudly, never silently degrading.
+
+Rotating across tiers on failure is the whole redundancy story — there is no separate
+retry or key-rotation layer beneath it.
 
 ``FailoverLLM`` itself satisfies ``LLMProtocol``, so callers can't tell a chain from a
-single client, and a two-client chain is exactly the old primary/backup pair.
+single client, and ``factory.get_llm`` returns a bare client when only one tier is set.
 """
 
 import logging

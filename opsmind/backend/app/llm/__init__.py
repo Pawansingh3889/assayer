@@ -1,1 +1,1 @@
-"""LLM domain: the single Anthropic client wrapper and versioned prompts."""
+"""LLM domain: the OpenAI-compatible client, tier failover, and versioned prompts."""
