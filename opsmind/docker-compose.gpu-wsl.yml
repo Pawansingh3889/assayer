@@ -1,0 +1,39 @@
+# GPU acceleration under Docker Desktop on WSL2, where the usual mechanism does not work.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu-wsl.yml up
+#
+# Docker Desktop's engine runs in its own `docker-desktop` distro. That distro has no
+# nvidia runtime and no `nvidia-container-toolkit`, and installing one is pointless —
+# the distro is replaced on every Docker Desktop update. `--gpus all` therefore fails
+# with "failed to discover GPU vendor from CDI", because nothing populates /etc/cdi.
+#
+# It does not need to. WSL exposes the GPU through a paravirtualised device, and the
+# engine distro already has both halves:
+#
+#   /dev/dxg          the device itself
+#   /usr/lib/wsl/lib  libcuda.so and friends, injected by the Windows driver
+#
+# Mapping those two into the container is the whole mechanism. Nothing to install.
+#
+# Driver requirement: **525 or newer**, and this is the part that catches people out.
+# Ollama's CUDA runtime is CUDA 12. On an older driver the mapping above succeeds, the
+# container starts, and Ollama reports:
+#
+#   msg="inference compute" id=cpu library=cpu
+#
+# which is not an error and does not stop anything — it simply serves from the CPU
+# for ever. `nvidia-smi` must show CUDA 12.x in its header; the Windows driver version
+# it reports beside that is the number to check against 525.
+#
+# Memory: WSL's own cap applies before any of this. A 3 GB VM cannot load a model that
+# needs 5 GB no matter what the GPU is doing, and the failure looks like a hang. Raise
+# `memory=` in %USERPROFILE%\.wslconfig and run `wsl --shutdown` for it to take effect.
+
+services:
+  ollama:
+    devices:
+      - /dev/dxg
+    volumes:
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+    environment:
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib

@@ -57,7 +57,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.1:8b}\" || exit 1",
+          "ollama list | grep -q \"${OLLAMA_MODEL:-llama3.2:3b}\" || exit 1",
         ]
       interval: 15s
       timeout: 5s
@@ -76,7 +76,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: >-
       'until ollama list >/dev/null 2>&1; do sleep 2; done;
-       ollama pull "${OLLAMA_MODEL:-llama3.1:8b}"'
+       ollama pull "${OLLAMA_MODEL:-llama3.2:3b}"'
     restart: "no"
 
   backend:
@@ -112,7 +112,7 @@ services:
       LLM_TIER3_ENABLED: ${LLM_TIER3_ENABLED:-true}
       LLM_TIER3_BASE_URL: ${LLM_TIER3_BASE_URL:-http://ollama:11434/v1}
       LLM_TIER3_API_KEY: ${LLM_TIER3_API_KEY:-}
-      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-llama3.1:8b}
+      LLM_TIER3_MODEL: ${LLM_TIER3_MODEL:-llama3.2:3b}
       LLM_TIER3_TIMEOUT_SECONDS: ${LLM_TIER3_TIMEOUT_SECONDS:-300}
     depends_on:
       postgres:
@@ -124,9 +124,8 @@ services:
     # No source bind mount: the image is what runs, so what was tested is what ships.
     # Migrations still apply on start — the schema must match the code that ships with
     # it — but `python -m app.seed` does not. Seeding is idempotent, which is why it is
-    # harmless in development, and exactly why it must not run here: it would create
-    # demo creator and participant accounts on a customer's install, and dev-auth trusts
-    # any user id it is handed.
+    # harmless in development, and exactly why it must not run here: it would leave five
+    # working accounts, two of them creators, behind a password published in the source.
     command: >-
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"

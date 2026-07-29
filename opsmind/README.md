@@ -134,6 +134,52 @@ All five share the password `opsmind-dev-password` — override with `SEED_PASSW
 | participant | Ravi Nair | `ravi@opsmind.dev` |
 | participant | Remy Fontaine | `remy@opsmind.dev` |
 
+## The local tier
+
+Tier 3 is an Ollama container, reached only when both cloud tiers fail. It exists so the
+service is never rate-limited and never out of credit — and it is the only tier that
+keeps survey content on your own hardware.
+
+The default model is **`llama3.2:3b`**, chosen to fit rather than to impress. The
+previous default, `llama3.1:8b`, needs roughly 5 GB resident; on any host with less it
+does not run slowly, it does not run at all — and since tier 3 is only reached once both
+cloud tiers are already failing, that is the worst possible moment to discover it.
+`llama3.2:3b` is about 2 GB and fits in a 4 GB GPU or a modest VM. Set `OLLAMA_MODEL`
+and `LLM_TIER3_MODEL` together to change it; a mismatch means tier 3 404s at exactly
+that same bad moment.
+
+### GPU acceleration
+
+Opt-in, because a device reservation on a host without a GPU refuses to start rather
+than degrading:
+
+```bash
+# Linux host with NVIDIA hardware and nvidia-container-toolkit
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+
+# Docker Desktop on WSL2 — different mechanism, see the file for why
+docker compose -f docker-compose.yml -f docker-compose.gpu-wsl.yml up
+```
+
+**The driver requirement catches people out.** Ollama's CUDA runtime is CUDA 12, which
+needs an NVIDIA driver of **525 or newer**. On an older driver nothing errors: the
+container starts, the GPU is mapped, and Ollama logs
+
+```
+msg="inference compute" id=cpu library=cpu
+```
+
+then serves from the CPU indefinitely. Check `nvidia-smi` — the header must read
+CUDA 12.x. That line in the logs is the only reliable confirmation the GPU is in use.
+
+Under WSL, the VM's own memory cap applies before any of this, and a VM smaller than the
+model cannot load it however capable the GPU is. Raise `memory=` in
+`%USERPROFILE%\.wslconfig`, then `wsl --shutdown`.
+
+`LLM_TIER3_TIMEOUT_SECONDS` stays at 300 by default, sized for a CPU cold load. On a
+host where the GPU is confirmed working it can come down a long way — but lower it only
+after seeing that log line, or the first cold start after an idle gap will time out.
+
 ## Tests
 
 ```bash
