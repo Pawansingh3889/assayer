@@ -2,10 +2,10 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.users.models import User
+from app.users.models import User, UserRole
 
 
 class UserRepository:
@@ -28,3 +28,9 @@ class UserRepository:
     async def list_all(self) -> list[User]:
         result = await self.session.execute(select(User).order_by(User.display_name))
         return list(result.scalars().all())
+
+    async def count_with_role(self, role: UserRole) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(User).where(User.role == role)
+        )
+        return int(result.scalar_one())
