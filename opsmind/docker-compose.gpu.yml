@@ -1,0 +1,35 @@
+# GPU acceleration for the local inference tier, on a Linux host with NVIDIA hardware.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#   docker compose -f docker-compose.prod.yml -f docker-compose.gpu.yml up -d
+#
+# An override rather than part of the base file, because a device reservation on a host
+# without a GPU does not degrade — it refuses to start the service. The default has to
+# work on any machine, so acceleration is something you opt into.
+#
+# Requires `nvidia-container-toolkit` installed and the runtime configured:
+#
+#   sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+#
+# For **Docker Desktop on WSL2** this file will not work — its engine has no nvidia
+# runtime and discovers GPUs through CDI, which WSL does not populate. Use
+# docker-compose.gpu-wsl.yml instead.
+#
+# Driver requirement: **525 or newer**. Ollama's CUDA runtime is CUDA 12; an older
+# driver is not a slow path, it is no GPU at all — the server starts, reports
+# `inference compute id=cpu library=cpu`, and quietly serves from the CPU. Check with
+# `nvidia-smi`: the CUDA version in the header must read 12.x.
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      # Ollama picks the first visible device. Pin it when the host has more than one
+      # and something else is using them.
+      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}

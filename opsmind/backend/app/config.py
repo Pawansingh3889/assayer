@@ -55,7 +55,7 @@ class Settings(BaseSettings):
         "", description="Third tier base URL, e.g. http://ollama:11434/v1"
     )
     llm_tier3_api_key: str = Field("", description="Third tier API key (blank if not required)")
-    llm_tier3_model: str = Field("", description="Third tier model id, e.g. llama3.1:8b")
+    llm_tier3_model: str = Field("", description="Third tier model id, e.g. llama3.2:3b")
     llm_tier3_timeout_seconds: float = Field(
         300.0, gt=0, description="Read timeout for the third tier, in seconds"
     )
