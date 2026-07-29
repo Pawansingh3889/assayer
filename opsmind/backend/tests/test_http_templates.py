@@ -9,6 +9,7 @@ the match against `/{template_id}`.
 from uuid import uuid4
 
 from app.llm.base import ToolTurn
+from tests.auth_helpers import bearer
 
 DRAFTED = {
     "title": "Shift handover",
@@ -21,7 +22,7 @@ DRAFTED = {
 
 
 def _as(user):
-    return {"X-User-Id": str(user.id)}
+    return bearer(user)
 
 
 def _drafted(payload=None, note="Drafted it."):

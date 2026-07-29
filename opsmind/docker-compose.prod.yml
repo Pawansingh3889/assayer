@@ -10,6 +10,8 @@
 #
 # Required in the environment (no defaults — a missing value must fail loudly):
 #   POSTGRES_PASSWORD    the database password
+#   JWT_SECRET           signs access tokens; the built-in default is published
+#   FRONTEND_ORIGIN      the browser app's origin, for CORS
 #   LLM_TIER1_API_KEY    unless tier 1 is disabled
 #
 # APP_ENV=prod is set below deliberately: it makes an unusable LLM configuration a
@@ -86,10 +88,17 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-opsmind}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before deploying}@postgres:5432/${POSTGRES_DB:-opsmind}
-      # Makes a broken LLM configuration fatal at startup instead of a warning.
+      # Makes a broken LLM configuration fatal at startup instead of a warning — and
+      # refuses to start at all while JWT_SECRET is still the development key.
       APP_ENV: prod
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?set FRONTEND_ORIGIN to the browser app's origin}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Signs every access token. There is no safe default: the built-in one is
+      # published in the source, so anyone holding it can sign in as any account.
+      #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a long random value before deploying}
+      JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-720}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-local}
       LLM_TIER1_ENABLED: ${LLM_TIER1_ENABLED:-true}
       LLM_TIER1_BASE_URL: ${LLM_TIER1_BASE_URL:-https://api.cerebras.ai/v1}
       LLM_TIER1_API_KEY: ${LLM_TIER1_API_KEY:-}

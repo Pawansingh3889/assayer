@@ -69,29 +69,57 @@ configuration a startup failure rather than a warning. It still builds the backe
 from source; a release should pull a pre-built, signed one, which is what `PIPELINE.md`
 §3 is for.
 
-## Auth and seed users
+## Auth
 
-Auth is deliberately thin for development: every request identifies its caller with an
-`X-User-Id` header, resolved by a single dependency. Replacing that one dependency with
-a real identity provider requires no change to any route. Requests without the header
-get a 401.
-
-`python -m app.seed` runs on start **in development only** and is idempotent. It is
-deliberately absent from `docker-compose.prod.yml`: dev-auth trusts any user id it is
-handed, so seeding a customer install would create working accounts nobody asked for.
-
-| Role | Name | `X-User-Id` |
-|---|---|---|
-| creator | Ava Whitlock | `00000000-0000-0000-0000-0000000000a1` |
-| creator | Arjun Rao | `00000000-0000-0000-0000-0000000000a2` |
-| participant | Rosa Bell | `00000000-0000-0000-0000-0000000000b1` |
-| participant | Ravi Nair | `00000000-0000-0000-0000-0000000000b2` |
-| participant | Remy Fontaine | `00000000-0000-0000-0000-0000000000b3` |
+Email and password in, a signed bearer token out. Send it on every request:
 
 ```bash
-curl -s http://localhost:8000/api/v1/templates \
-  -H "X-User-Id: 00000000-0000-0000-0000-0000000000a1"
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ava@opsmind.dev","password":"opsmind-dev-password"}' | jq -r .access_token)
+
+curl -s http://localhost:8000/api/v1/templates -H "Authorization: Bearer $TOKEN"
 ```
+
+| Route | |
+|---|---|
+| `POST /api/v1/auth/register` | Self-signup. **Always creates a participant** — the role is not read from the request |
+| `POST /api/v1/auth/login` | Email + password → token |
+| `GET /api/v1/auth/me` | Who the token belongs to |
+
+Creators are never self-served: a creator can publish surveys and read every
+participant's answers, so the role is granted by seeding or by promoting an account.
+
+Passwords are Argon2id, minimum twelve characters and no composition rules — those push
+people towards `Passw0rd!` and measurably lower entropy. Tokens are HS256, valid for
+`JWT_TTL_MINUTES` (12 hours by default), and carry only a subject; the account and its
+role are read from the database on every request, so a token cannot hold a role its
+owner has lost and deleting an account takes effect immediately.
+
+**`JWT_SECRET` must be set before deploying.** The default is a published development
+key, and anyone holding it can sign in as anyone — so `APP_ENV=prod` refuses to start
+while it is still in place.
+
+`AUTH_PROVIDER=oidc` is the seam for single sign-on, not a working mode: verification
+sits behind a port (`app/auth/tokens.py`) so an external issuer is a swap rather than a
+rewrite, but `OIDCTokenVerifier` is a documented stub. `buildplan.md` defers SSO until a
+client asks for it.
+
+### Seed users
+
+`python -m app.seed` runs on start **in development only** and is idempotent. It is
+deliberately absent from `docker-compose.prod.yml`: it would leave working accounts,
+with a published password, on a customer's install.
+
+All five share the password `opsmind-dev-password` — override with `SEED_PASSWORD`.
+
+| Role | Name | Email |
+|---|---|---|
+| creator | Ava Whitlock | `ava@opsmind.dev` |
+| creator | Arjun Rao | `arjun@opsmind.dev` |
+| participant | Rosa Bell | `rosa@opsmind.dev` |
+| participant | Ravi Nair | `ravi@opsmind.dev` |
+| participant | Remy Fontaine | `remy@opsmind.dev` |
 
 ## Tests
 

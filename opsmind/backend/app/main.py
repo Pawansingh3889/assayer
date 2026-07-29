@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.router import router as auth_router
 from app.conduct.router import router as runs_router
 from app.config import get_settings
 from app.db.session import get_session
@@ -99,6 +100,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 register_error_handlers(app)
+app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(templates_router)
 app.include_router(results_router)
