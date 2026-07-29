@@ -1,9 +1,11 @@
 """Configuration is checked at startup, not on a participant's first message.
 
-Two separate guards, for two different mistakes:
+Guards for the mistakes that are only ever mistakes:
 
-- a tier switched on but left half-filled — always invalid, refused by `Settings`
-- nothing configured at all — fatal in prod, a warning anywhere else
+- an LLM tier switched on but left half-filled — always invalid, refused by `Settings`
+- no LLM tier at all — fatal in prod, a warning anywhere else
+- the development signing key still in place in prod — refused outright
+- `oidc` selected without an issuer to trust
 """
 
 import logging
@@ -11,15 +13,26 @@ import logging
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import DEV_JWT_SECRET, Settings
 from app.main import check_llm_configuration
 
 DB = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"
+REAL_SECRET = "a-real-deployment-signing-key-of-respectable-length"
 
 
 def _settings(**overrides) -> Settings:
     # _env_file=None so a developer's real .env cannot leak into the assertion.
     return Settings(database_url=DB, _env_file=None, **overrides)
+
+
+def _prod(**overrides) -> Settings:
+    """A settings object that would be allowed to deploy.
+
+    A prod deployment must carry its own signing key, so these tests supply one. That
+    is not incidental scaffolding — it is the rule under test in `_the_dev_signing_key`
+    below, and every other prod assertion depends on satisfying it first.
+    """
+    return _settings(app_env="prod", jwt_secret=REAL_SECRET, **overrides)
 
 
 def test_a_fully_configured_tier_is_accepted():
@@ -93,7 +106,7 @@ def _deploy(monkeypatch, **overrides) -> None:
 def test_no_tier_configured_is_fatal_in_prod(monkeypatch):
     """The whole point: a deployment that can never answer a question must not boot
     looking healthy."""
-    _deploy(monkeypatch, app_env="prod")
+    _deploy(monkeypatch, app_env="prod", jwt_secret=REAL_SECRET)
 
     with pytest.raises(RuntimeError, match="No LLM tier is configured"):
         check_llm_configuration()
@@ -117,9 +130,55 @@ def test_a_configured_tier_boots_without_touching_the_network(monkeypatch):
     _deploy(
         monkeypatch,
         app_env="prod",
+        jwt_secret=REAL_SECRET,
         llm_tier1_enabled=True,
         llm_tier1_base_url="http://127.0.0.1:9/v1",
         llm_tier1_model="llama-3.3-70b",
     )
 
     check_llm_configuration()
+
+
+# ------------------------------------------------------------------ auth
+
+
+def test_the_dev_signing_key_cannot_be_deployed():
+    """The one that would matter most if it were missed. Anyone holding the published
+    development key can mint a token for any user id — that is every account on the
+    deployment — and nothing about the running service would look wrong."""
+    with pytest.raises(ValidationError, match="JWT_SECRET is still the development key"):
+        _settings(app_env="prod")
+
+
+def test_the_dev_signing_key_is_fine_outside_prod():
+    """It has to be. Every test in this suite signs tokens with it."""
+    assert _settings(app_env="dev").jwt_secret == DEV_JWT_SECRET
+
+
+def test_a_deployment_with_its_own_key_is_accepted():
+    assert _prod().jwt_secret == REAL_SECRET
+
+
+def test_oidc_without_an_issuer_is_refused():
+    """Without an issuer and a key source there is nothing to check a token against,
+    so any token of roughly the right shape would be trusted."""
+    with pytest.raises(ValidationError, match="OIDC_ISSUER and OIDC_JWKS_URL"):
+        _settings(auth_provider="oidc")
+
+
+def test_oidc_does_not_require_a_local_signing_key():
+    """Under oidc this service issues nothing, so the local key is irrelevant — and
+    demanding one would imply a login endpoint that does not exist in that mode."""
+    settings = _settings(
+        app_env="prod",
+        auth_provider="oidc",
+        oidc_issuer="https://sso.example/realms/opsmind",
+        oidc_jwks_url="https://sso.example/realms/opsmind/protocol/openid-connect/certs",
+    )
+
+    assert settings.jwt_secret == DEV_JWT_SECRET
+
+
+def test_an_unknown_auth_provider_is_refused():
+    with pytest.raises(ValidationError):
+        _settings(auth_provider="ldap")

@@ -5,9 +5,14 @@ rather than silently degrading. No silent fallbacks.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# A known, published value, so it can never be mistaken for a secret somebody chose.
+# The validator below refuses to let a prod deployment start while still using it.
+DEV_JWT_SECRET = "dev-only-insecure-signing-key-do-not-deploy"
 
 
 class Settings(BaseSettings):
@@ -55,6 +60,30 @@ class Settings(BaseSettings):
         300.0, gt=0, description="Read timeout for the third tier, in seconds"
     )
 
+    # ------------------------------------------------------------------ auth
+    #
+    # ``local`` issues and verifies its own tokens against a password, and needs no
+    # second service — which is the point: an identity provider is another container,
+    # roughly a gigabyte, and no deployment has asked for SSO yet. ``oidc`` verifies
+    # tokens somebody else issued; the seam exists so that becomes a swap rather than
+    # a rewrite. See app/auth/tokens.py.
+    auth_provider: Literal["local", "oidc"] = Field(
+        "local", description="local | oidc — who issues and verifies access tokens"
+    )
+    jwt_secret: str = Field(
+        DEV_JWT_SECRET,
+        description="HS256 signing key for locally-issued tokens. Must be changed in prod.",
+    )
+    jwt_issuer: str = Field("opsmind", description="`iss` claim on locally-issued tokens")
+    jwt_ttl_minutes: int = Field(
+        720, gt=0, description="How long a locally-issued access token stays valid"
+    )
+
+    # Only read when auth_provider is oidc.
+    oidc_issuer: str = Field("", description="Expected `iss`, e.g. https://sso.example/realms/x")
+    oidc_audience: str = Field("", description="Expected `aud` claim")
+    oidc_jwks_url: str = Field("", description="Where the issuer publishes its signing keys")
+
     app_env: str = Field("dev", description="dev | prod")
     frontend_origin: str = Field(
         "http://localhost:3000", description="Allowed CORS origin for the browser app"
@@ -90,6 +119,41 @@ class Settings(BaseSettings):
                     f"LLM tier {tier} is enabled but {' and '.join(missing)} "
                     f"{'are' if len(missing) > 1 else 'is'} not set."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _auth_is_deployable(self) -> "Settings":
+        """Refuse the two auth configurations that are only ever mistakes.
+
+        Shipping the development signing key is the serious one. Anyone holding it can
+        mint a token for any user id, which is every account on the deployment — and
+        nothing about the running service would look wrong. It is a published constant
+        precisely so this check can be exact rather than a guess at entropy.
+
+        A local secret is pointless under ``oidc`` and vice versa, so each provider is
+        checked only for what it actually reads.
+        """
+        if self.auth_provider == "local":
+            if self.app_env == "prod" and self.jwt_secret == DEV_JWT_SECRET:
+                raise ValueError(
+                    "JWT_SECRET is still the development key. Set it to a long random "
+                    "value before deploying — anyone with this key can sign in as anyone."
+                )
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ("OIDC_ISSUER", self.oidc_issuer),
+                ("OIDC_JWKS_URL", self.oidc_jwks_url),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"AUTH_PROVIDER=oidc requires {' and '.join(missing)}. "
+                "Without them any token bearing the right shape would be trusted."
+            )
         return self
 
 

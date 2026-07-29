@@ -8,11 +8,12 @@ filename, the literal `export` path segment — was reachable from a service-lev
 from uuid import uuid4
 
 from app.llm.base import ToolTurn
+from tests.auth_helpers import bearer
 from tests.fakes import move_on, record
 
 
 def _as(user):
-    return {"X-User-Id": str(user.id)}
+    return bearer(user)
 
 
 async def _completed_run(client, participant, published, fake_llm):

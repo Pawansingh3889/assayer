@@ -10,11 +10,12 @@ from uuid import uuid4
 
 from app.errors import LLM_UNAVAILABLE_MESSAGE
 from app.llm.base import LLMError
+from tests.auth_helpers import bearer
 from tests.fakes import move_on, record
 
 
 def _as(user):
-    return {"X-User-Id": str(user.id)}
+    return bearer(user)
 
 
 async def _start(client, participant, published):
