@@ -86,9 +86,22 @@ curl -s http://localhost:8000/api/v1/templates -H "Authorization: Bearer $TOKEN"
 | `POST /api/v1/auth/register` | Self-signup. **Always creates a participant** — the role is not read from the request |
 | `POST /api/v1/auth/login` | Email + password → token |
 | `GET /api/v1/auth/me` | Who the token belongs to |
+| `PATCH /api/v1/users/{id}/role` | **Creator-only.** The only way an account's role ever changes |
 
-Creators are never self-served: a creator can publish surveys and read every
-participant's answers, so the role is granted by seeding or by promoting an account.
+Roles are assigned, never claimed. Registration always produces a participant, and a
+creator can publish surveys and read every participant's answers — so that role is
+granted by an existing creator, or by seeding:
+
+```bash
+curl -s -X PATCH http://localhost:8000/api/v1/users/$USER_ID/role \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"role":"creator"}'
+```
+
+Demoting the **last** creator is refused. Granting the role requires already holding it,
+so removing the only one would leave no account able to grant it back, and recovery
+would mean direct database access. Promote a replacement first, then step down — that
+handover is the case the rule exists to allow.
 
 Passwords are Argon2id, minimum twelve characters and no composition rules — those push
 people towards `Passw0rd!` and measurably lower entropy. Tokens are HS256, valid for
