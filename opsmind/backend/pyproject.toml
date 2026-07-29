@@ -16,6 +16,9 @@ dependencies = [
     # because the anthropic SDK pulled httpx in transitively. That SDK is gone, so this
     # declaration is now the only thing putting httpx in the runtime image — it must stay.
     "httpx>=0.28",
+    "pyjwt>=2.10",
+    "argon2-cffi>=23.1",
+    "email-validator>=2.2",
 ]
 
 [dependency-groups]

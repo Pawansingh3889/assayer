@@ -8,6 +8,7 @@ there are and in what order.
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from app.config import Settings
 from app.llm import factory
@@ -76,12 +77,22 @@ def test_a_single_configured_tier_is_used_bare(monkeypatch):
     assert isinstance(llm, OpenAICompatibleLLMClient)
 
 
-def test_an_enabled_but_unconfigured_tier_fails_loudly(monkeypatch):
-    # Enable tier 1 but without base_url/model -> should raise LLMError from client construction
-    monkeypatch.setattr(factory, "get_settings", lambda: _settings(llm_tier1_enabled=True))
+def test_an_enabled_but_unconfigured_tier_never_reaches_the_factory():
+    """This used to be caught one layer down, by the client constructor raising
+    LLMError — and the HTTP layer renders any LLMError as a calm 503, so a typo in
+    .env was indistinguishable from a provider outage, on every request.
 
+    Settings refuses it now, so the failure arrives at startup naming the field.
+    """
+    with pytest.raises(ValidationError, match="LLM_TIER1_BASE_URL"):
+        _settings(llm_tier1_enabled=True)
+
+
+def test_the_client_still_guards_its_own_inputs():
+    """Defence in depth. Settings is the boundary that matters, but the client must not
+    assume settings was the only way it could have been constructed."""
     with pytest.raises(LLMError):
-        factory.get_llm()
+        OpenAICompatibleLLMClient(base_url="", api_key="", model="")
 
 
 def test_no_tiers_configured_raises_error(monkeypatch):

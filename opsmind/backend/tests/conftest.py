@@ -2,10 +2,21 @@
 
 Uses the compose Postgres (a separate ``opsmind_test`` database), so repository and
 service logic is exercised against the real engine, not a stand-in.
+
+Where that Postgres lives comes from ``DATABASE_URL`` — the same variable CI sets and
+the README tells you to set when running pytest. It used to be hardcoded to
+``localhost:5432``, so setting ``DATABASE_URL`` for the suite did nothing and the
+documented command was misleading. Worse, on a machine already running something else
+on 5432, the suite would connect to *that* database and create ``opsmind_test`` inside
+it. The default below is the old literal, so nothing changes for anyone who sets
+nothing.
 """
+
+import os
 
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.db.base import Base
@@ -15,18 +26,30 @@ from app.templates.enums import AnswerType
 from app.templates.schemas import QuestionInput, TemplateCreate
 from app.templates.service import TemplateService
 from app.users.models import User, UserRole
+from tests.fakes import FakeLLM
 
-ADMIN_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"
-TEST_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind_test"
+DEFAULT_URL = "postgresql+asyncpg://opsmind:opsmind@localhost:5432/opsmind"
+
+_admin = make_url(os.environ.get("DATABASE_URL") or DEFAULT_URL)
+# The test database is the configured one with a ``_test`` suffix, so pointing
+# DATABASE_URL at a real database can never make the suite drop its tables.
+TEST_DB = f"{_admin.database}_test"
+
+ADMIN_URL = _admin.render_as_string(hide_password=False)
+TEST_URL = _admin.set(database=TEST_DB).render_as_string(hide_password=False)
 
 
 @pytest_asyncio.fixture
 async def engine():
     admin = create_async_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
     async with admin.connect() as conn:
-        found = await conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = 'opsmind_test'"))
+        found = await conn.scalar(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": TEST_DB}
+        )
         if not found:
-            await conn.execute(text("CREATE DATABASE opsmind_test"))
+            # CREATE DATABASE takes no bind parameters, so the identifier is quoted
+            # rather than bound. TEST_DB is derived from the operator's own env.
+            await conn.execute(text(f'CREATE DATABASE "{TEST_DB}"'))
     await admin.dispose()
 
     eng = create_async_engine(TEST_URL)
@@ -41,6 +64,58 @@ async def engine():
 async def session(engine):
     async with AsyncSession(engine, expire_on_commit=False) as sess:
         yield sess
+
+
+@pytest_asyncio.fixture
+async def client(session):
+    """The app, driven over HTTP, against the same session the test asserts on.
+
+    Everything below the routes already had tests; the routes themselves did not, so
+    the auth dependencies, the error handlers, the status codes and the response
+    schemas were never exercised. This fixture is what makes them testable.
+
+    ASGITransport dispatches straight into the app — no socket, no live server, no
+    port to collide with. ``get_session`` is overridden rather than left alone so a
+    request and the test that set it up see the same rows: the fixtures below only
+    flush, and an independent session would not see uncommitted work.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.db.session import get_session
+    from app.main import app
+
+    async def _use_the_test_session():
+        yield session
+
+    # The app is a module-level singleton, so an override left behind would leak into
+    # every later test. Registered and removed around one test only.
+    app.dependency_overrides[get_session] = _use_the_test_session
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://opsmind.test"
+        ) as http:
+            yield http
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+
+
+@pytest_asyncio.fixture
+def fake_llm(monkeypatch):
+    """Install a FakeLLM everywhere the app builds one, and hand it back.
+
+    Three modules call ``get_llm``, and each does ``from app.llm.factory import
+    get_llm`` — which binds the name into that module. Patching the factory alone
+    would therefore miss all three, and the request would try to reach a real
+    provider. Patch the names the callers actually look up.
+    """
+
+    def install(*turns):
+        llm = FakeLLM(*turns)
+        for module in ("app.conduct.engine", "app.templates.generation", "app.runs.summary"):
+            monkeypatch.setattr(f"{module}.get_llm", lambda _llm=llm: _llm)
+        return llm
+
+    return install
 
 
 @pytest_asyncio.fixture
@@ -90,6 +165,18 @@ async def published(session, creator):
     )
     await svc.publish(template.id, creator)
     return template
+
+
+@pytest_asyncio.fixture
+async def draft(session, creator):
+    """A saved but unpublished template — there is nothing here a participant may answer."""
+    return await TemplateService(session).create_draft(
+        TemplateCreate(
+            title="Not published yet",
+            questions=[QuestionInput(text="Anything to add?", answer_type=AnswerType.long_text)],
+        ),
+        creator,
+    )
 
 
 @pytest_asyncio.fixture
