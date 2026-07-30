@@ -116,3 +116,17 @@ def downgrade() -> None:
     op.drop_table('survey_templates')
     op.drop_table('users')
     # ### end Alembic commands ###
+
+    # Dropping a table does not drop the enum types its columns referenced — Postgres
+    # keeps them as free-standing types. Autogenerate does not emit these, so without
+    # them `downgrade base` left all six behind and the next `upgrade head` died on
+    # `type "user_role" already exists`, which made the downgrade path untestable.
+    for enum_name in (
+        'message_role',
+        'answer_kind',
+        'run_status',
+        'answer_type',
+        'template_status',
+        'user_role',
+    ):
+        sa.Enum(name=enum_name).drop(op.get_bind(), checkfirst=True)
