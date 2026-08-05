@@ -35,3 +35,7 @@ __MACOSX/
 !.vscode/launch.json
 !.vscode/tasks.json
 *.log
+
+# Local-only compose overrides (publishes the DB port for GUI access)
+docker-compose.dbport.yml
+docker-compose.override.yml
